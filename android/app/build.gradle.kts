@@ -18,15 +18,6 @@ android {
         jvmTarget = JavaVersion.VERSION_11.toString()
     }
 
-    signingConfigs {
-        create("release") {
-            storeFile = file("crucible.jks")
-            storePassword = "crucible123"
-            keyAlias = "crucible"
-            keyPassword = "crucible123"
-        }
-    }
-
     defaultConfig {
         applicationId = "com.zetrasystems.crucible"
         minSdk = 21
@@ -39,9 +30,12 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            // Use the default debug keystore until you create your own release keystore.
+            signingConfig = signingConfigs.getByName("debug")
+
             isMinifyEnabled = true
             isShrinkResources = true
+
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
