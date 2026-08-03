@@ -102,14 +102,19 @@ class _CrucibleScreenState extends State<CrucibleScreen> {
         elevation: 0,
         backgroundColor: const Color(0xFFF7F7FB),
         foregroundColor: Colors.black87,
-        title: const Text('Crucible',
-            style: TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: hasIdea
-            ? Text(
+        title: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Crucible',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 18)),
+            if (hasIdea)
+              Text(
                 'v${c.currentVersion!.versionNumber} · round ${c.roundNumber}',
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-              )
-            : null,
+                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+              ),
+          ],
+        ),
         actions: [
           if (hasIdea)
             PopupMenuButton<String>(
