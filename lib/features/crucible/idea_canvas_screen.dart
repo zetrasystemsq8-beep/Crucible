@@ -20,14 +20,70 @@ class _IdeaCanvasScreenState extends State<IdeaCanvasScreen> {
   final _evidence = TextEditingController();
   final _unknowns = TextEditingController();
 
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onControllerChange);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onControllerChange);
+    _title.dispose();
+    _oneSentence.dispose();
+    _problem.dispose();
+    _currentSolution.dispose();
+    _mySolution.dispose();
+    _whyItWins.dispose();
+    _evidence.dispose();
+    _unknowns.dispose();
+    super.dispose();
+  }
+
+  void _onControllerChange() => setState(() {});
+
   bool get _isComplete =>
       _title.text.trim().isNotEmpty &&
       _oneSentence.text.trim().isNotEmpty &&
       _problem.text.trim().isNotEmpty &&
       _mySolution.text.trim().isNotEmpty;
 
+  Future<void> _submit() async {
+    final canvas = IdeaCanvasData(
+      title: _title.text.trim(),
+      oneSentence: _oneSentence.text.trim(),
+      problem: _problem.text.trim(),
+      currentSolution: _currentSolution.text.trim(),
+      mySolution: _mySolution.text.trim(),
+      whyItWins: _whyItWins.text.trim(),
+      evidence: _evidence.text.trim(),
+      unknowns: _unknowns.text.trim(),
+    );
+
+    await widget.controller.startPressureTest(canvas);
+
+    if (!mounted) return;
+
+    if (widget.controller.rejectionReason != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Zetra rejected this submission: ${widget.controller.rejectionReason}',
+          ),
+          backgroundColor: Colors.redAccent[700],
+        ),
+      );
+    } else {
+      Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => CrucibleArenaScreen(controller: widget.controller),
+      ));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final checking = widget.controller.isCheckingIntake;
+
     return Scaffold(
       backgroundColor: const Color(0xFF0F1115),
       appBar: AppBar(
@@ -72,27 +128,16 @@ class _IdeaCanvasScreenState extends State<IdeaCanvasScreen> {
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(4)),
               ),
-              onPressed: _isComplete
-                  ? () {
-                      final canvas = IdeaCanvasData(
-                        title: _title.text.trim(),
-                        oneSentence: _oneSentence.text.trim(),
-                        problem: _problem.text.trim(),
-                        currentSolution: _currentSolution.text.trim(),
-                        mySolution: _mySolution.text.trim(),
-                        whyItWins: _whyItWins.text.trim(),
-                        evidence: _evidence.text.trim(),
-                        unknowns: _unknowns.text.trim(),
-                      );
-                      widget.controller.startPressureTest(canvas);
-                      Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) =>
-                            CrucibleArenaScreen(controller: widget.controller),
-                      ));
-                    }
-                  : null,
-              child: const Text('START PRESSURE TEST',
-                  style: TextStyle(letterSpacing: 1.5)),
+              onPressed: (_isComplete && !checking) ? _submit : null,
+              child: checking
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Text('START PRESSURE TEST',
+                      style: TextStyle(letterSpacing: 1.5)),
             ),
           ),
         ],
