@@ -1,30 +1,61 @@
 import 'package:flutter/foundation.dart';
 import '../../core/groq_client.dart';
 
-/// ---------- Models ---------- (unchanged)
+/// ---------- The Idea Canvas (structured intake, replaces free-text chat) ----------
+
+class IdeaCanvasData {
+  IdeaCanvasData({
+    required this.title,
+    required this.oneSentence,
+    required this.problem,
+    required this.currentSolution,
+    required this.mySolution,
+    required this.whyItWins,
+    required this.evidence,
+    required this.unknowns,
+  });
+
+  final String title;
+  final String oneSentence;
+  final String problem;
+  final String currentSolution;
+  final String mySolution;
+  final String whyItWins;
+  final String evidence;
+  final String unknowns;
+
+  String toIdeaContent() => '''
+Title: $title
+One-sentence pitch: $oneSentence
+Problem: $problem
+Current solutions in the world: $currentSolution
+My solution: $mySolution
+Why it wins: $whyItWins
+Evidence so far: $evidence
+Known unknowns: $unknowns
+''';
+}
 
 class IdeaVersion {
   IdeaVersion({
     required this.versionNumber,
     required this.content,
     required this.createdAt,
-    this.deltaFromPrevious,
   });
 
   final int versionNumber;
   final String content;
   final DateTime createdAt;
-  final String? deltaFromPrevious;
 }
 
-class ChallengeExchange {
-  ChallengeExchange({
-    required this.zetraMessage,
-    this.innovatorReply,
-  });
+/// ---------- Dossier: structured findings pulled out of each challenge ----------
 
-  final String zetraMessage;
-  String? innovatorReply;
+enum FindingTag { assumption, evidenceGap, contradiction, risk, novelty }
+
+class Finding {
+  Finding({required this.tag, required this.text});
+  final FindingTag tag;
+  final String text;
 }
 
 class JudgeReport {
@@ -48,10 +79,8 @@ class JudgeReport {
 
   factory JudgeReport.fromRawText(String raw) {
     List<String> section(String label) {
-      final pattern = RegExp(
-        '$label:(.*?)(?=\\n[A-Z][a-zA-Z ]+:|\$)',
-        dotAll: true,
-      );
+      final pattern =
+          RegExp('$label:(.*?)(?=\\n[A-Z][a-zA-Z ]+:|\$)', dotAll: true);
       final match = pattern.firstMatch(raw);
       if (match == null) return [];
       return match
@@ -74,13 +103,21 @@ class JudgeReport {
   }
 }
 
-/// ---------- Zetra: the Challenger ---------- (unchanged)
+/// ---------- Zetra: the Challenger ----------
 
 class ZetraService {
   ZetraService(this._client);
-
   final GroqClient _client;
   static const model = 'llama-3.3-70b-versatile';
+
+  static const stageLabels = [
+    'Assumptions',
+    'Evidence',
+    'Novelty',
+    'Viability',
+    'Synthesis',
+  ];
+  static const totalStages = 5;
 
   static const _systemPrompt = '''
 You are Zetra, an adversarial reasoning AI inside the Crucible platform.
@@ -88,30 +125,24 @@ Your only purpose is to pressure-test the idea the user presents.
 
 Rules:
 - Never insult the user. Be respectful but extremely difficult to convince.
-- Challenge assumptions, request evidence, find contradictions, compare
-  against existing knowledge, propose counterexamples.
-- Ask exactly one sharp, specific question or raise exactly one issue per turn.
-  Do not soften with praise. Do not summarize what they said back to them.
-- If the user gives evidence, test whether it actually supports the claim,
-  don't just accept it because evidence was offered.
+- Raise exactly ONE issue per turn. Do not summarize what they said back to them.
+- Every reply MUST start with exactly one tag, then a space, then your challenge:
+  [ASSUMPTION] for an unproven premise, [EVIDENCE_GAP] for a claim lacking proof,
+  [CONTRADICTION] for something inconsistent, [RISK] for a practical/economic risk,
+  [NOVELTY] for a prior-art/originality concern.
 - Never declare the idea good or bad. Your job is pressure, not verdicts.
 ''';
 
   Future<String> challenge({
     required String ideaContent,
     required List<Map<String, String>> priorTurns,
-    required int roundNumber,
+    required int stageIndex, // 1-5
   }) async {
-    final difficultyNote = roundNumber == 1
-        ? 'This is round 1: focus on clarity and core assumptions.'
-        : roundNumber == 2
-            ? 'This is round 2: focus on evidence quality.'
-            : roundNumber == 3
-                ? 'This is round 3: focus on novelty vs. existing prior art.'
-                : 'This is round $roundNumber: focus on practical/economic viability.';
+    final stage = stageLabels[(stageIndex - 1).clamp(0, totalStages - 1)];
+    final focusNote = 'Current stage: $stage. Focus your challenge accordingly.';
 
     final messages = <Map<String, String>>[
-      {'role': 'system', 'content': '$_systemPrompt\n$difficultyNote'},
+      {'role': 'system', 'content': '$_systemPrompt\n$focusNote'},
       {'role': 'user', 'content': 'The idea under review:\n$ideaContent'},
       ...priorTurns,
     ];
@@ -120,11 +151,10 @@ Rules:
   }
 }
 
-/// ---------- Arbiter: the Judge ---------- (unchanged)
+/// ---------- Arbiter: the Judge ----------
 
 class ArbiterService {
   ArbiterService(this._client);
-
   final GroqClient _client;
   static const model = 'llama-3.1-8b-instant';
 
@@ -164,21 +194,11 @@ reasoning presented is strong enough to justify further investigation.
       temperature: 0.3,
       maxTokens: 1500,
     );
-
     return JudgeReport.fromRawText(raw);
   }
 }
 
 /// ---------- Controller ----------
-
-/// A single item in the visible chat stream — the UI renders a list of these.
-enum ChatRole { idea, zetra, user, arbiter }
-
-class ChatItem {
-  ChatItem({required this.role, required this.text});
-  final ChatRole role;
-  final String text;
-}
 
 class CrucibleController extends ChangeNotifier {
   CrucibleController({required GroqClient client})
@@ -189,37 +209,31 @@ class CrucibleController extends ChangeNotifier {
   final ArbiterService _arbiter;
 
   final List<IdeaVersion> versions = [];
-  final List<ChatItem> chat = [];
   final List<Map<String, String>> _transcript = [];
+  final List<Finding> findings = [];
+  final List<String> evidenceLog = [];
 
-  int roundNumber = 1;
+  String? currentChallenge;
+  String? lastYourReply;
+  int stageIndex = 1; // 1..5, drives the timeline
   bool isLoading = false;
   String? errorMessage;
+  JudgeReport? report;
 
-  IdeaVersion? get currentVersion =>
-      versions.isEmpty ? null : versions.last;
+  IdeaVersion? get currentVersion => versions.isEmpty ? null : versions.last;
+  int get totalStages => ZetraService.totalStages;
+  List<String> get stageLabels => ZetraService.stageLabels;
+  bool get canRequestJudgment => stageIndex >= 3; // allow judging from stage 3 on
 
-  /// Single entry point for the chat input box.
-  /// First message becomes the idea; every message after that is a reply
-  /// to Zetra, and immediately triggers Zetra's next challenge — just like
-  /// sending a message in an ordinary chat.
-  Future<void> sendMessage(String text) async {
-    if (text.trim().isEmpty) return;
-
-    if (currentVersion == null) {
-      versions.add(IdeaVersion(
-        versionNumber: 1,
-        content: text.trim(),
-        createdAt: DateTime.now(),
-      ));
-      chat.add(ChatItem(role: ChatRole.idea, text: text.trim()));
-      notifyListeners();
-      await _requestChallenge();
-      return;
+  Future<void> startPressureTest(IdeaCanvasData canvas) async {
+    versions.add(IdeaVersion(
+      versionNumber: 1,
+      content: canvas.toIdeaContent(),
+      createdAt: DateTime.now(),
+    ));
+    if (canvas.evidence.trim().isNotEmpty) {
+      evidenceLog.add(canvas.evidence.trim());
     }
-
-    chat.add(ChatItem(role: ChatRole.user, text: text.trim()));
-    _transcript.add({'role': 'user', 'content': text.trim()});
     notifyListeners();
     await _requestChallenge();
   }
@@ -230,13 +244,31 @@ class CrucibleController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final reply = await _zetra.challenge(
+      final raw = await _zetra.challenge(
         ideaContent: currentVersion!.content,
         priorTurns: _transcript,
-        roundNumber: roundNumber,
+        stageIndex: stageIndex,
       );
-      _transcript.add({'role': 'assistant', 'content': reply});
-      chat.add(ChatItem(role: ChatRole.zetra, text: reply));
+      _transcript.add({'role': 'assistant', 'content': raw});
+
+      final match = RegExp(r'^\[(\w+)\]\s*(.*)$', dotAll: true).firstMatch(raw);
+      if (match != null) {
+        final tagText = match.group(1)!.toUpperCase();
+        final body = match.group(2)!.trim();
+        currentChallenge = body;
+        final tag = switch (tagText) {
+          'ASSUMPTION' => FindingTag.assumption,
+          'EVIDENCE_GAP' => FindingTag.evidenceGap,
+          'CONTRADICTION' => FindingTag.contradiction,
+          'RISK' => FindingTag.risk,
+          'NOVELTY' => FindingTag.novelty,
+          _ => FindingTag.assumption,
+        };
+        findings.add(Finding(tag: tag, text: body));
+      } else {
+        currentChallenge = raw;
+      }
+      lastYourReply = null;
     } catch (e) {
       errorMessage = e.toString();
     } finally {
@@ -245,7 +277,25 @@ class CrucibleController extends ChangeNotifier {
     }
   }
 
-  /// Called from the overflow menu — advances to a new idea version.
+  Future<void> replyToChallenge(String text) async {
+    if (text.trim().isEmpty) return;
+    lastYourReply = text.trim();
+    _transcript.add({'role': 'user', 'content': text.trim()});
+    if (stageIndex < totalStages) stageIndex += 1;
+    notifyListeners();
+    await _requestChallenge();
+  }
+
+  void addEvidence(String text) {
+    if (text.trim().isEmpty) return;
+    evidenceLog.add(text.trim());
+    _transcript.add({
+      'role': 'user',
+      'content': 'Additional evidence submitted: ${text.trim()}',
+    });
+    notifyListeners();
+  }
+
   void submitRevision(String newContent) {
     if (newContent.trim().isEmpty) return;
     versions.add(IdeaVersion(
@@ -253,47 +303,24 @@ class CrucibleController extends ChangeNotifier {
       content: newContent.trim(),
       createdAt: DateTime.now(),
     ));
-    roundNumber += 1;
-    chat.add(ChatItem(
-      role: ChatRole.idea,
-      text: 'Revised (v${versions.length}): ${newContent.trim()}',
-    ));
     notifyListeners();
   }
 
-  /// Called from the overflow menu — ends the round with a judgment.
   Future<void> requestJudgment() async {
     if (currentVersion == null) return;
     isLoading = true;
     errorMessage = null;
     notifyListeners();
-
     try {
-      final report = await _arbiter.judge(
+      report = await _arbiter.judge(
         ideaContent: currentVersion!.content,
         fullTranscript: _transcript,
       );
-      chat.add(ChatItem(role: ChatRole.arbiter, text: _reportToText(report)));
     } catch (e) {
       errorMessage = e.toString();
     } finally {
       isLoading = false;
       notifyListeners();
     }
-  }
-
-  String _reportToText(JudgeReport r) {
-    String block(String title, List<String> items) => items.isEmpty
-        ? ''
-        : '$title\n${items.map((i) => '• $i').join('\n')}\n\n';
-
-    return '${block('Strongest Arguments', r.strongestArguments)}'
-        '${block('Weakest Arguments', r.weakestArguments)}'
-        '${block('Unsupported Assumptions', r.unsupportedAssumptions)}'
-        '${block('Contradictions', r.contradictions)}'
-        '${block('Unanswered Questions', r.unansweredQuestions)}'
-        '${block('Suggested Experiments', r.suggestedExperiments)}'
-        '${r.readinessSummary.isNotEmpty ? 'Readiness: ${r.readinessSummary}' : ''}'
-        .trim();
   }
 }
