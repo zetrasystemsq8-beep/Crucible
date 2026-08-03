@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'core/groq_client.dart';
 import 'features/crucible/crucible_feature.dart';
-import 'features/crucible/crucible_screen.dart';
+import 'features/crucible/idea_canvas_screen.dart';
 
 void main() {
   runApp(const CrucibleApp());
@@ -12,21 +12,17 @@ class CrucibleApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // TODO: replace with your actual Groq API key, ideally loaded from
-    // a secure source (--dart-define, env var, secrets manager) —
-    // never hardcode a real key in source control.
     const groqApiKey = String.fromEnvironment('GROQ_API_KEY');
-
     final client = GroqClient(apiKey: groqApiKey);
     final controller = CrucibleController(client: client);
 
     return MaterialApp(
       title: 'Crucible',
-      theme: ThemeData(
-        colorSchemeSeed: Colors.indigo,
-        useMaterial3: true,
+      theme: ThemeData.dark(useMaterial3: true).copyWith(
+        colorSchemeSeed: Colors.redAccent,
+        scaffoldBackgroundColor: const Color(0xFF0F1115),
       ),
-      home: CrucibleScreen(controller: controller),
+      home: IdeaCanvasScreen(controller: controller),
     );
   }
 }
