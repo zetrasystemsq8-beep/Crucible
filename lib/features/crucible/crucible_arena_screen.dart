@@ -256,6 +256,22 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
                         const SizedBox(height: 10),
                         Text(c.currentChallenge!,
                             style: const TextStyle(color: Colors.white, fontSize: 15)),
+                        if (c.lastReplyWasAdequate == false)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 10),
+                            child: Row(
+                              children: const [
+                                Icon(Icons.block, size: 14, color: Colors.orangeAccent),
+                                SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    'Not accepted — same issue, try again with specifics',
+                                    style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -363,7 +379,6 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
 
   Widget _buildDossierTab(CrucibleController c) {
     Widget section(String title, IconData icon, Color color, List<Finding> items) {
-      final filtered = items;
       return Padding(
         padding: const EdgeInsets.only(bottom: 20),
         child: Column(
@@ -373,16 +388,16 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
               children: [
                 Icon(icon, size: 16, color: color),
                 const SizedBox(width: 6),
-                Text('$title (${filtered.length})',
+                Text('$title (${items.length})',
                     style: TextStyle(
                         color: color, fontWeight: FontWeight.bold, fontSize: 13)),
               ],
             ),
             const SizedBox(height: 8),
-            if (filtered.isEmpty)
+            if (items.isEmpty)
               const Text('None yet.', style: TextStyle(color: Colors.white24, fontSize: 12))
             else
-              ...filtered.map((f) => Padding(
+              ...items.map((f) => Padding(
                     padding: const EdgeInsets.only(bottom: 6),
                     child: Text('• ${f.text}',
                         style: const TextStyle(color: Colors.white70, fontSize: 13)),
