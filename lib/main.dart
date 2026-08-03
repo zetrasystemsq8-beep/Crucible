@@ -18,7 +18,9 @@ class CrucibleApp extends StatelessWidget {
 
     return MaterialApp(
       title: 'Crucible',
-      theme: ThemeData.dark(useMaterial3: true).copyWith(
+      theme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
         colorSchemeSeed: Colors.redAccent,
         scaffoldBackgroundColor: const Color(0xFF0F1115),
       ),
