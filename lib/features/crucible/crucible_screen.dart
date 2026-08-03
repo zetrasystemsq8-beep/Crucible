@@ -11,8 +11,8 @@ class CrucibleScreen extends StatefulWidget {
 }
 
 class _CrucibleScreenState extends State<CrucibleScreen> {
-  final _ideaController = TextEditingController();
-  final _replyController = TextEditingController();
+  final _inputController = TextEditingController();
+  final _scrollController = ScrollController();
 
   @override
   void initState() {
@@ -23,194 +23,333 @@ class _CrucibleScreenState extends State<CrucibleScreen> {
   @override
   void dispose() {
     widget.controller.removeListener(_onChange);
-    _ideaController.dispose();
-    _replyController.dispose();
+    _inputController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  void _onChange() => setState(() {});
+  void _onChange() {
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  void _handleSend() {
+    final text = _inputController.text.trim();
+    if (text.isEmpty) return;
+    _inputController.clear();
+    widget.controller.sendMessage(text);
+  }
+
+  Future<void> _showRevisionSheet() async {
+    final c = TextEditingController(
+      text: widget.controller.currentVersion?.content ?? '',
+    );
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 16,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Submit a revised version',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: c,
+              maxLines: 6,
+              decoration: const InputDecoration(border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () {
+                  widget.controller.submitRevision(c.text);
+                  Navigator.pop(ctx);
+                },
+                child: const Text('Submit Revision'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
+    final hasIdea = c.currentVersion != null;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Crucible')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: c.currentVersion == null
-            ? _buildIntake()
-            : _buildArena(c),
+      backgroundColor: const Color(0xFFF7F7FB),
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: const Color(0xFFF7F7FB),
+        foregroundColor: Colors.black87,
+        title: const Text('Crucible',
+            style: TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: hasIdea
+            ? Text(
+                'v${c.currentVersion!.versionNumber} · round ${c.roundNumber}',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              )
+            : null,
+        actions: [
+          if (hasIdea)
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert),
+              onSelected: (value) {
+                if (value == 'revise') _showRevisionSheet();
+                if (value == 'judge') c.requestJudgment();
+              },
+              itemBuilder: (ctx) => [
+                const PopupMenuItem(
+                  value: 'judge',
+                  child: Text('Get Judgment (Arbiter)'),
+                ),
+                const PopupMenuItem(
+                  value: 'revise',
+                  child: Text('Submit Revision'),
+                ),
+              ],
+            ),
+        ],
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: !hasIdea
+                  ? _buildEmptyState()
+                  : ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.all(16),
+                      itemCount: c.chat.length + (c.isLoading ? 1 : 0),
+                      itemBuilder: (ctx, i) {
+                        if (i == c.chat.length) {
+                          return _typingIndicator();
+                        }
+                        return _buildChatItem(c.chat[i]);
+                      },
+                    ),
+            ),
+            if (c.errorMessage != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(c.errorMessage!,
+                    style: const TextStyle(color: Colors.red, fontSize: 12)),
+              ),
+            _buildInputBar(hasIdea),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildIntake() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Present your idea',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+  Widget _buildEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.science_outlined, size: 48, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text(
+              'Present an idea below.\nZetra will start pressure-testing it.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          ],
         ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _ideaController,
-          maxLines: 6,
-          decoration: const InputDecoration(
-            border: OutlineInputBorder(),
-            hintText: 'Describe the invention, claim, or concept...',
-          ),
-        ),
-        const SizedBox(height: 12),
-        ElevatedButton(
-          onPressed: () {
-            if (_ideaController.text.trim().isEmpty) return;
-            widget.controller.submitIdea(_ideaController.text.trim());
-          },
-          child: const Text('Submit to Crucible'),
-        ),
-      ],
+      ),
     );
   }
 
-  Widget _buildArena(CrucibleController c) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Version ${c.currentVersion!.versionNumber} · Round ${c.roundNumber}',
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: ListView(
-            children: [
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text(c.currentVersion!.content),
+  Widget _buildInputBar(bool hasIdea) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _inputController,
+              minLines: 1,
+              maxLines: 5,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: InputDecoration(
+                hintText: hasIdea
+                    ? 'Reply to Zetra...'
+                    : 'Describe your idea...',
+                filled: true,
+                fillColor: const Color(0xFFF1F1F5),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(24),
+                  borderSide: BorderSide.none,
                 ),
               ),
-              const SizedBox(height: 12),
-              for (final exchange in c.currentRoundExchanges) ...[
-                _bubble('Zetra', exchange.zetraMessage, isChallenger: true),
-                if (exchange.innovatorReply != null)
-                  _bubble('You', exchange.innovatorReply!),
-              ],
-              if (c.latestReport != null) _buildReport(c.latestReport!),
-              if (c.errorMessage != null)
-                Text(
-                  c.errorMessage!,
-                  style: const TextStyle(color: Colors.red),
-                ),
-            ],
+              onSubmitted: (_) => _handleSend(),
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _replyController,
-          decoration: const InputDecoration(
-            border: OutlineInputBorder(),
-            hintText: 'Respond to Zetra...',
+          const SizedBox(width: 8),
+          Material(
+            color: Colors.indigo,
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: widget.controller.isLoading ? null : _handleSend,
+              child: const Padding(
+                padding: EdgeInsets.all(10),
+                child: Icon(Icons.arrow_upward, color: Colors.white, size: 20),
+              ),
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          children: [
-            ElevatedButton(
-              onPressed: c.isLoading ? null : c.requestChallenge,
-              child: const Text('Challenge (Zetra)'),
-            ),
-            OutlinedButton(
-              onPressed: c.isLoading
-                  ? null
-                  : () {
-                      if (_replyController.text.trim().isEmpty) return;
-                      c.submitInnovatorReply(_replyController.text.trim());
-                      _replyController.clear();
-                    },
-              child: const Text('Send Reply'),
-            ),
-            OutlinedButton(
-              onPressed: c.isLoading
-                  ? null
-                  : () => c.submitRevision(_ideaController.text.trim()),
-              child: const Text('Submit Revision'),
-            ),
-            ElevatedButton(
-              onPressed: c.isLoading ? null : c.requestJudgment,
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo),
-              child: const Text('Get Judgment (Arbiter)'),
-            ),
-          ],
-        ),
-        if (c.isLoading) const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: LinearProgressIndicator(),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
-  Widget _bubble(String who, String text, {bool isChallenger = false}) {
+  Widget _typingIndicator() {
     return Align(
-      alignment: isChallenger ? Alignment.centerLeft : Alignment.centerRight,
+      alignment: Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.all(10),
-        constraints: const BoxConstraints(maxWidth: 320),
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: isChallenger ? Colors.red[50] : Colors.blue[50],
-          borderRadius: BorderRadius.circular(8),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(who, style: const TextStyle(fontWeight: FontWeight.bold)),
-            Text(text),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 8),
+            Text('Zetra is thinking...', style: TextStyle(color: Colors.grey)),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildReport(JudgeReport report) {
-    Widget section(String title, List<String> items) {
-      if (items.isEmpty) return const SizedBox.shrink();
-      return Padding(
-        padding: const EdgeInsets.only(top: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-            ...items.map((i) => Text('• $i')),
-          ],
-        ),
-      );
-    }
-
-    return Card(
-      color: Colors.indigo[50],
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Arbiter Report',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            section('Strongest Arguments', report.strongestArguments),
-            section('Weakest Arguments', report.weakestArguments),
-            section('Unsupported Assumptions', report.unsupportedAssumptions),
-            section('Contradictions', report.contradictions),
-            section('Unanswered Questions', report.unansweredQuestions),
-            section('Suggested Experiments', report.suggestedExperiments),
-            if (report.readinessSummary.isNotEmpty) ...[
+  Widget _buildChatItem(ChatItem item) {
+    switch (item.role) {
+      case ChatRole.idea:
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.indigo[50],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.indigo[100]!),
+          ),
+          child: Text(item.text, style: const TextStyle(fontSize: 14)),
+        );
+      case ChatRole.zetra:
+        return _bubble(
+          text: item.text,
+          alignment: Alignment.centerLeft,
+          color: Colors.white,
+          label: 'Zetra',
+          labelColor: Colors.red[400]!,
+        );
+      case ChatRole.user:
+        return _bubble(
+          text: item.text,
+          alignment: Alignment.centerRight,
+          color: Colors.indigo,
+          textColor: Colors.white,
+        );
+      case ChatRole.arbiter:
+        return Container(
+          margin: const EdgeInsets.symmetric(vertical: 8),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFEFF1FB),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.indigo[100]!),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.gavel, size: 16, color: Colors.indigo[400]),
+                  const SizedBox(width: 6),
+                  Text('Arbiter Report',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.indigo[700])),
+                ],
+              ),
               const SizedBox(height: 8),
-              Text('Readiness: ${report.readinessSummary}',
-                  style: const TextStyle(fontStyle: FontStyle.italic)),
+              Text(item.text, style: const TextStyle(fontSize: 13.5)),
             ],
+          ),
+        );
+    }
+  }
+
+  Widget _bubble({
+    required String text,
+    required Alignment alignment,
+    required Color color,
+    Color textColor = Colors.black87,
+    String? label,
+    Color? labelColor,
+  }) {
+    return Align(
+      alignment: alignment,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.78,
+        ),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (label != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Text(label,
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: labelColor)),
+              ),
+            Text(text, style: TextStyle(color: textColor, fontSize: 14)),
           ],
         ),
       ),
