@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../../core/groq_client.dart';
 
-/// ---------- The Idea Canvas (structured intake, replaces free-text chat) ----------
+/// ---------- The Idea Canvas ----------
 
 class IdeaCanvasData {
   IdeaCanvasData({
@@ -48,7 +48,7 @@ class IdeaVersion {
   final DateTime createdAt;
 }
 
-/// ---------- Dossier: structured findings pulled out of each challenge ----------
+/// ---------- Dossier ----------
 
 enum FindingTag { assumption, evidenceGap, contradiction, risk, novelty }
 
@@ -105,6 +105,23 @@ class JudgeReport {
 
 /// ---------- Zetra: the Challenger ----------
 
+/// Result of one Zetra turn: whether the previous reply was good enough
+/// to advance, plus the next challenge.
+class ZetraTurn {
+  ZetraTurn({required this.advance, required this.tag, required this.text});
+  final bool advance;
+  final FindingTag tag;
+  final String text;
+}
+
+enum IntakeVerdict { serious, notSerious }
+
+class IntakeCheck {
+  IntakeCheck({required this.verdict, required this.reason});
+  final IntakeVerdict verdict;
+  final String reason;
+}
+
 class ZetraService {
   ZetraService(this._client);
   final GroqClient _client;
@@ -119,27 +136,82 @@ class ZetraService {
   ];
   static const totalStages = 5;
 
+  /// Gatekeeper check run once, right after intake, before any pressure
+  /// testing starts. Filters out gibberish, jokes, or placeholder text.
+  Future<IntakeCheck> classifyIntake(String ideaContent) async {
+    final messages = <Map<String, String>>[
+      {
+        'role': 'system',
+        'content': '''
+You are Zetra's intake gate for the Crucible platform.
+Decide if the following submission is a genuine idea, invention, theory,
+business concept, or claim that deserves serious pressure-testing — or if
+it is gibberish, random characters, a joke, or placeholder text with no
+real content.
+
+Respond with exactly one line, no other text:
+SERIOUS: <one sentence why> 
+or
+NOT_SERIOUS: <one sentence why>
+''',
+      },
+      {'role': 'user', 'content': 'Submission:\n$ideaContent'},
+    ];
+
+    final raw = await _client.chat(
+      model: model,
+      messages: messages,
+      temperature: 0.1,
+      maxTokens: 100,
+    );
+
+    final isSerious = raw.trim().toUpperCase().startsWith('SERIOUS');
+    final reason = raw.contains(':') ? raw.split(':').skip(1).join(':').trim() : raw;
+    return IntakeCheck(
+      verdict: isSerious ? IntakeVerdict.serious : IntakeVerdict.notSerious,
+      reason: reason,
+    );
+  }
+
   static const _systemPrompt = '''
 You are Zetra, an adversarial reasoning AI inside the Crucible platform.
-Your only purpose is to pressure-test the idea the user presents.
+Your only purpose is to pressure-test the idea the user presents. You are
+respectful but extremely difficult to convince, and you do not let weak
+answers slide.
 
-Rules:
-- Never insult the user. Be respectful but extremely difficult to convince.
-- Raise exactly ONE issue per turn. Do not summarize what they said back to them.
-- Every reply MUST start with exactly one tag, then a space, then your challenge:
-  [ASSUMPTION] for an unproven premise, [EVIDENCE_GAP] for a claim lacking proof,
-  [CONTRADICTION] for something inconsistent, [RISK] for a practical/economic risk,
-  [NOVELTY] for a prior-art/originality concern.
+You will be told the current stage focus and, if this is not the first
+challenge, the user's most recent reply.
+
+Your response MUST be exactly this format, nothing else:
+[ADVANCE] or [HOLD]
+[ASSUMPTION] or [EVIDENCE_GAP] or [CONTRADICTION] or [RISK] or [NOVELTY]
+<your challenge text>
+
+Rules for the first line:
+- If there is no prior reply yet (this is the opening challenge), always
+  output [ADVANCE].
+- Output [ADVANCE] ONLY if the user's most recent reply gave real
+  reasoning, a specific mechanism, data, or a concrete answer that
+  actually engages the challenge.
+- Output [HOLD] if the reply was vague, a bare assertion ("yes", "it just
+  does", "trust me"), an acknowledgement with no content, off-topic, or a
+  non-answer. If you HOLD, do not move to a new topic — name specifically
+  what was missing from their answer and press the exact same issue again,
+  harder.
+- Never soften a HOLD to be polite. A weak answer must not advance.
+
+Rules for the challenge text:
+- Raise exactly one issue. Do not summarize what they said back to them.
 - Never declare the idea good or bad. Your job is pressure, not verdicts.
 ''';
 
-  Future<String> challenge({
+  Future<ZetraTurn> challenge({
     required String ideaContent,
     required List<Map<String, String>> priorTurns,
-    required int stageIndex, // 1-5
+    required int stageIndex,
   }) async {
     final stage = stageLabels[(stageIndex - 1).clamp(0, totalStages - 1)];
-    final focusNote = 'Current stage: $stage. Focus your challenge accordingly.';
+    final focusNote = 'Current stage: $stage.';
 
     final messages = <Map<String, String>>[
       {'role': 'system', 'content': '$_systemPrompt\n$focusNote'},
@@ -147,7 +219,32 @@ Rules:
       ...priorTurns,
     ];
 
-    return _client.chat(model: model, messages: messages, temperature: 0.6);
+    final raw = await _client.chat(model: model, messages: messages, temperature: 0.5);
+
+    final match = RegExp(
+      r'^\[(\w+)\]\s*\[(\w+)\]\s*(.*)$',
+      dotAll: true,
+    ).firstMatch(raw.trim());
+
+    if (match == null) {
+      // Defensive fallback if the model doesn't follow format — hold by
+      // default, since letting an unparseable reply advance is the
+      // worse failure mode.
+      return ZetraTurn(advance: false, tag: FindingTag.assumption, text: raw.trim());
+    }
+
+    final advance = match.group(1)!.toUpperCase() == 'ADVANCE';
+    final tagText = match.group(2)!.toUpperCase();
+    final tag = switch (tagText) {
+      'ASSUMPTION' => FindingTag.assumption,
+      'EVIDENCE_GAP' => FindingTag.evidenceGap,
+      'CONTRADICTION' => FindingTag.contradiction,
+      'RISK' => FindingTag.risk,
+      'NOVELTY' => FindingTag.novelty,
+      _ => FindingTag.assumption,
+    };
+
+    return ZetraTurn(advance: advance, tag: tag, text: match.group(3)!.trim());
   }
 }
 
@@ -175,6 +272,8 @@ Readiness Summary:
 
 Never state the invention is true or false. Only assess whether the
 reasoning presented is strong enough to justify further investigation.
+If the discussion contains mostly evasive or low-content replies, say so
+plainly in the Readiness Summary rather than being generous.
 ''';
 
   Future<JudgeReport> judge({
@@ -215,25 +314,55 @@ class CrucibleController extends ChangeNotifier {
 
   String? currentChallenge;
   String? lastYourReply;
-  int stageIndex = 1; // 1..5, drives the timeline
+  bool? lastReplyWasAdequate; // null = no reply submitted yet this stage
+  int stageIndex = 1;
   bool isLoading = false;
+  bool isCheckingIntake = false;
   String? errorMessage;
+  String? rejectionReason; // set if intake gate rejects the idea
   JudgeReport? report;
 
   IdeaVersion? get currentVersion => versions.isEmpty ? null : versions.last;
   int get totalStages => ZetraService.totalStages;
   List<String> get stageLabels => ZetraService.stageLabels;
-  bool get canRequestJudgment => stageIndex >= 3; // allow judging from stage 3 on
+  bool get canRequestJudgment => stageIndex >= 3;
+
+  /// Quick, free, client-side check for obviously trivial replies —
+  /// avoids burning an API call on a one-word non-answer.
+  bool _isTriviallyWeak(String reply) {
+    final words = reply.trim().split(RegExp(r'\s+'));
+    if (words.length <= 2) return true;
+    const fillerOnly = {'yes', 'no', 'ok', 'okay', 'sure', 'true', 'idk', 'maybe'};
+    if (words.length <= 4 &&
+        words.every((w) => fillerOnly.contains(w.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '')))) {
+      return true;
+    }
+    return false;
+  }
 
   Future<void> startPressureTest(IdeaCanvasData canvas) async {
-    versions.add(IdeaVersion(
-      versionNumber: 1,
-      content: canvas.toIdeaContent(),
-      createdAt: DateTime.now(),
-    ));
-    if (canvas.evidence.trim().isNotEmpty) {
-      evidenceLog.add(canvas.evidence.trim());
+    isCheckingIntake = true;
+    rejectionReason = null;
+    notifyListeners();
+
+    final content = canvas.toIdeaContent();
+    try {
+      final check = await _zetra.classifyIntake(content);
+      if (check.verdict == IntakeVerdict.notSerious) {
+        rejectionReason = check.reason;
+        isCheckingIntake = false;
+        notifyListeners();
+        return;
+      }
+    } catch (e) {
+      // If the gate check itself fails, don't block the user — proceed,
+      // but surface the error so it's visible something went wrong.
+      errorMessage = e.toString();
     }
+
+    isCheckingIntake = false;
+    versions.add(IdeaVersion(versionNumber: 1, content: content, createdAt: DateTime.now()));
+    if (canvas.evidence.trim().isNotEmpty) evidenceLog.add(canvas.evidence.trim());
     notifyListeners();
     await _requestChallenge();
   }
@@ -244,31 +373,21 @@ class CrucibleController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final raw = await _zetra.challenge(
+      final turn = await _zetra.challenge(
         ideaContent: currentVersion!.content,
         priorTurns: _transcript,
         stageIndex: stageIndex,
       );
-      _transcript.add({'role': 'assistant', 'content': raw});
+      _transcript.add({'role': 'assistant', 'content': '[${turn.advance ? "ADVANCE" : "HOLD"}] ${turn.text}'});
+      currentChallenge = turn.text;
+      findings.add(Finding(tag: turn.tag, text: turn.text));
 
-      final match = RegExp(r'^\[(\w+)\]\s*(.*)$', dotAll: true).firstMatch(raw);
-      if (match != null) {
-        final tagText = match.group(1)!.toUpperCase();
-        final body = match.group(2)!.trim();
-        currentChallenge = body;
-        final tag = switch (tagText) {
-          'ASSUMPTION' => FindingTag.assumption,
-          'EVIDENCE_GAP' => FindingTag.evidenceGap,
-          'CONTRADICTION' => FindingTag.contradiction,
-          'RISK' => FindingTag.risk,
-          'NOVELTY' => FindingTag.novelty,
-          _ => FindingTag.assumption,
-        };
-        findings.add(Finding(tag: tag, text: body));
-      } else {
-        currentChallenge = raw;
+      if (lastYourReply != null) {
+        lastReplyWasAdequate = turn.advance;
+        if (turn.advance && stageIndex < totalStages) {
+          stageIndex += 1;
+        }
       }
-      lastYourReply = null;
     } catch (e) {
       errorMessage = e.toString();
     } finally {
@@ -280,8 +399,17 @@ class CrucibleController extends ChangeNotifier {
   Future<void> replyToChallenge(String text) async {
     if (text.trim().isEmpty) return;
     lastYourReply = text.trim();
+
+    if (_isTriviallyWeak(text)) {
+      // Caught client-side — no API call needed, and no stage advance.
+      lastReplyWasAdequate = false;
+      currentChallenge =
+          "That's not an answer — give me specifics: reasoning, a mechanism, or evidence. Restate your response to: \"$currentChallenge\"";
+      notifyListeners();
+      return;
+    }
+
     _transcript.add({'role': 'user', 'content': text.trim()});
-    if (stageIndex < totalStages) stageIndex += 1;
     notifyListeners();
     await _requestChallenge();
   }
@@ -289,10 +417,7 @@ class CrucibleController extends ChangeNotifier {
   void addEvidence(String text) {
     if (text.trim().isEmpty) return;
     evidenceLog.add(text.trim());
-    _transcript.add({
-      'role': 'user',
-      'content': 'Additional evidence submitted: ${text.trim()}',
-    });
+    _transcript.add({'role': 'user', 'content': 'Additional evidence submitted: ${text.trim()}'});
     notifyListeners();
   }
 
