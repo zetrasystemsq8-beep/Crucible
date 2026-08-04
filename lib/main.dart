@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'core/groq_client.dart';
-import 'features/crucible/crucible_feature.dart';
-import 'features/crucible/idea_canvas_screen.dart';
+import 'features/vault/vault_feature.dart';
+import 'features/vault/vault_screen.dart';
 
 void main() {
   runApp(const CrucibleApp());
@@ -14,17 +14,17 @@ class CrucibleApp extends StatelessWidget {
   Widget build(BuildContext context) {
     const groqApiKey = String.fromEnvironment('GROQ_API_KEY');
     final client = GroqClient(apiKey: groqApiKey);
-    final controller = CrucibleController(client: client);
+    final vault = VaultController(repository: VaultRepository());
 
     return MaterialApp(
       title: 'Crucible',
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
-        colorSchemeSeed: Colors.redAccent,
-        scaffoldBackgroundColor: const Color(0xFF0F1115),
+        colorSchemeSeed: const Color(0xFFE0272E),
+        scaffoldBackgroundColor: const Color(0xFF0B0C10),
       ),
-      home: IdeaCanvasScreen(controller: controller),
+      home: VaultScreen(client: client, vault: vault),
     );
   }
 }
