@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'crucible_feature.dart';
 import 'version_compare_screen.dart';
+import 'export_service.dart';
 
 class CrucibleArenaScreen extends StatefulWidget {
   const CrucibleArenaScreen({super.key, required this.controller});
@@ -13,6 +14,7 @@ class CrucibleArenaScreen extends StatefulWidget {
 class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
   final _replyController = TextEditingController();
   final _scrollController = ScrollController();
+  bool _exporting = false;
 
   @override
   void initState() {
@@ -39,6 +41,21 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
         );
       }
     });
+  }
+
+  Future<void> _handleExport() async {
+    setState(() => _exporting = true);
+    try {
+      await ExportService.exportAndShare(widget.controller);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.redAccent[700]),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   Future<void> _showEvidenceSheet() async {
@@ -148,6 +165,18 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
           title: Text(c.currentVersion?.content.split('\n').first ?? 'Arena',
               style: const TextStyle(color: Colors.white, fontSize: 15),
               overflow: TextOverflow.ellipsis),
+          actions: [
+            IconButton(
+              tooltip: 'Export & Share',
+              onPressed: _exporting ? null : _handleExport,
+              icon: _exporting
+                  ? const SizedBox(
+                      width: 18, height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white54),
+                    )
+                  : const Icon(Icons.ios_share, color: Colors.white70),
+            ),
+          ],
           bottom: const TabBar(
             indicatorColor: Color(0xFFE0272E),
             tabs: [Tab(text: 'ARENA'), Tab(text: 'DOSSIER')],
