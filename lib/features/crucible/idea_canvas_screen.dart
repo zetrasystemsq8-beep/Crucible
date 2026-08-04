@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import '../../core/groq_client.dart';
+import '../vault/vault_feature.dart';
 import 'crucible_feature.dart';
 import 'crucible_arena_screen.dart';
 
 class IdeaCanvasScreen extends StatefulWidget {
-  const IdeaCanvasScreen({super.key, required this.controller});
-  final CrucibleController controller;
+  const IdeaCanvasScreen({super.key, required this.client, required this.vault});
+  final GroqClient client;
+  final VaultController vault;
 
   @override
   State<IdeaCanvasScreen> createState() => _IdeaCanvasScreenState();
@@ -29,6 +32,8 @@ class _IdeaCanvasScreenState extends State<IdeaCanvasScreen> {
   final _evidence = TextEditingController();
   final _unknowns = TextEditingController();
 
+  bool _submitting = false;
+
   late final List<MapEntry<_CanvasField, TextEditingController>> _fields = [
     MapEntry(_CanvasField('Title', 'Name the invention', Icons.bolt, 1, required: true), _title),
     MapEntry(_CanvasField('One-sentence pitch', 'What is it, in one line?', Icons.short_text, 2, required: true), _oneSentence),
@@ -41,21 +46,12 @@ class _IdeaCanvasScreenState extends State<IdeaCanvasScreen> {
   ];
 
   @override
-  void initState() {
-    super.initState();
-    widget.controller.addListener(_onControllerChange);
-  }
-
-  @override
   void dispose() {
-    widget.controller.removeListener(_onControllerChange);
     for (final f in _fields) {
       f.value.dispose();
     }
     super.dispose();
   }
-
-  void _onControllerChange() => setState(() {});
 
   int get _filledCount => _fields.where((f) => f.value.text.trim().isNotEmpty).length;
 
@@ -77,27 +73,36 @@ class _IdeaCanvasScreenState extends State<IdeaCanvasScreen> {
       unknowns: _unknowns.text.trim(),
     );
 
-    await widget.controller.startPressureTest(canvas);
-    if (!mounted) return;
+    setState(() => _submitting = true);
 
-    if (widget.controller.rejectionReason != null) {
+    final controller = CrucibleController(
+      client: widget.client,
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      title: canvas.title,
+      oneLiner: canvas.oneSentence,
+      onSessionChanged: widget.vault.upsertFromSession,
+    );
+
+    await controller.startPressureTest(canvas);
+    if (!mounted) return;
+    setState(() => _submitting = false);
+
+    if (controller.rejectionReason != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Zetra rejected this submission: ${widget.controller.rejectionReason}'),
+          content: Text('Zetra rejected this submission: ${controller.rejectionReason}'),
           backgroundColor: Colors.redAccent[700],
         ),
       );
     } else {
       Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => CrucibleArenaScreen(controller: widget.controller),
+        builder: (_) => CrucibleArenaScreen(controller: controller),
       ));
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final checking = widget.controller.isCheckingIntake;
-
     return Scaffold(
       backgroundColor: const Color(0xFF0B0C10),
       body: CustomScrollView(
@@ -125,8 +130,8 @@ class _IdeaCanvasScreenState extends State<IdeaCanvasScreen> {
                     elevation: _isComplete ? 6 : 0,
                     shadowColor: const Color(0xFFE0272E).withOpacity(0.5),
                   ),
-                  onPressed: (_isComplete && !checking) ? _submit : null,
-                  child: checking
+                  onPressed: (_isComplete && !_submitting) ? _submit : null,
+                  child: _submitting
                       ? const SizedBox(
                           width: 20, height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
@@ -168,9 +173,14 @@ class _IdeaCanvasScreenState extends State<IdeaCanvasScreen> {
         children: [
           Row(
             children: [
+              IconButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                icon: const Icon(Icons.arrow_back, color: Colors.white54),
+                padding: EdgeInsets.zero,
+              ),
+              const SizedBox(width: 4),
               Container(
-                width: 40,
-                height: 40,
+                width: 40, height: 40,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(color: const Color(0xFFE0272E), width: 1.5),
@@ -179,11 +189,7 @@ class _IdeaCanvasScreenState extends State<IdeaCanvasScreen> {
               ),
               const SizedBox(width: 12),
               const Text('CRUCIBLE',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      letterSpacing: 4,
-                      fontWeight: FontWeight.w700)),
+                  style: TextStyle(color: Colors.white, fontSize: 22, letterSpacing: 4, fontWeight: FontWeight.w700)),
             ],
           ),
           const SizedBox(height: 14),
@@ -206,8 +212,7 @@ class _IdeaCanvasScreenState extends State<IdeaCanvasScreen> {
                 ),
               ),
               const SizedBox(width: 10),
-              Text('$_filledCount / ${_fields.length}',
-                  style: const TextStyle(color: Colors.white38, fontSize: 11)),
+              Text('$_filledCount / ${_fields.length}', style: const TextStyle(color: Colors.white38, fontSize: 11)),
             ],
           ),
         ],
@@ -234,13 +239,9 @@ class _IdeaCanvasScreenState extends State<IdeaCanvasScreen> {
             Row(
               children: [
                 Container(
-                  width: 22,
-                  height: 22,
+                  width: 22, height: 22,
                   alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: filled ? const Color(0xFFE0272E) : Colors.white10,
-                  ),
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: filled ? const Color(0xFFE0272E) : Colors.white10),
                   child: filled
                       ? const Icon(Icons.check, size: 13, color: Colors.white)
                       : Text('$number', style: const TextStyle(fontSize: 11, color: Colors.white54)),
@@ -249,11 +250,7 @@ class _IdeaCanvasScreenState extends State<IdeaCanvasScreen> {
                 Icon(field.icon, size: 15, color: Colors.white38),
                 const SizedBox(width: 6),
                 Text(field.label.toUpperCase(),
-                    style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.8)),
+                    style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 0.8)),
                 if (field.required) ...[
                   const SizedBox(width: 4),
                   const Text('*', style: TextStyle(color: Color(0xFFE0272E), fontWeight: FontWeight.bold)),
