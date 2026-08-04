@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'crucible_feature.dart';
+import 'version_compare_screen.dart';
 
 class CrucibleArenaScreen extends StatefulWidget {
   const CrucibleArenaScreen({super.key, required this.controller});
@@ -444,6 +445,21 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Text('• $e', style: const TextStyle(color: Colors.white70, fontSize: 13)),
               )),
+        if (c.versions.length > 1) ...[
+          const SizedBox(height: 20),
+          const Divider(color: Colors.white12),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => VersionCompareScreen(controller: c),
+              )),
+              icon: const Icon(Icons.compare_arrows, size: 18),
+              label: const Text('Compare Versions'),
+            ),
+          ),
+        ],
       ],
     );
   }
