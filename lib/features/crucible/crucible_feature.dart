@@ -103,10 +103,26 @@ class JudgeReport {
   }
 }
 
+/// ---------- Arena transcript ----------
+
+class ArenaMessage {
+  ArenaMessage({
+    required this.fromZetra,
+    required this.text,
+    this.isHold = false,
+    this.isReport = false,
+    this.stageLabel,
+  });
+
+  final bool fromZetra;
+  final String text;
+  final bool isHold;
+  final bool isReport;
+  final String? stageLabel;
+}
+
 /// ---------- Zetra: the Challenger ----------
 
-/// Result of one Zetra turn: whether the previous reply was good enough
-/// to advance, plus the next challenge.
 class ZetraTurn {
   ZetraTurn({required this.advance, required this.tag, required this.text});
   final bool advance;
@@ -136,8 +152,6 @@ class ZetraService {
   ];
   static const totalStages = 5;
 
-  /// Gatekeeper check run once, right after intake, before any pressure
-  /// testing starts. Filters out gibberish, jokes, or placeholder text.
   Future<IntakeCheck> classifyIntake(String ideaContent) async {
     final messages = <Map<String, String>>[
       {
@@ -149,8 +163,12 @@ business concept, or claim that deserves serious pressure-testing — or if
 it is gibberish, random characters, a joke, or placeholder text with no
 real content.
 
+When in doubt, prefer SERIOUS — this gate is only meant to catch obvious
+non-ideas, not to judge idea quality. Weak or underdeveloped ideas should
+still pass through and get pressure-tested, not be rejected here.
+
 Respond with exactly one line, no other text:
-SERIOUS: <one sentence why> 
+SERIOUS: <one sentence why>
 or
 NOT_SERIOUS: <one sentence why>
 ''',
@@ -165,8 +183,12 @@ NOT_SERIOUS: <one sentence why>
       maxTokens: 100,
     );
 
-    final isSerious = raw.trim().toUpperCase().startsWith('SERIOUS');
-    final reason = raw.contains(':') ? raw.split(':').skip(1).join(':').trim() : raw;
+    final upper = raw.toUpperCase();
+    // Check NOT_SERIOUS first since "NOT_SERIOUS" also contains "SERIOUS"
+    // as a substring — order matters here.
+    final isSerious = upper.contains('NOT_SERIOUS') ? false : upper.contains('SERIOUS');
+    final reason = raw.contains(':') ? raw.split(':').skip(1).join(':').trim() : raw.trim();
+
     return IntakeCheck(
       verdict: isSerious ? IntakeVerdict.serious : IntakeVerdict.notSerious,
       reason: reason,
@@ -193,16 +215,17 @@ Rules for the first line:
 - Output [ADVANCE] ONLY if the user's most recent reply gave real
   reasoning, a specific mechanism, data, or a concrete answer that
   actually engages the challenge.
-- Output [HOLD] if the reply was vague, a bare assertion ("yes", "it just
-  does", "trust me"), an acknowledgement with no content, off-topic, or a
-  non-answer. If you HOLD, do not move to a new topic — name specifically
-  what was missing from their answer and press the exact same issue again,
-  harder.
+- Output [HOLD] if the reply was vague, a bare assertion, an
+  acknowledgement with no content, off-topic, or a non-answer. If you
+  HOLD, name specifically what was missing and press the exact same
+  issue again, harder. Do not quote or repeat your own prior message
+  verbatim — restate the core issue freshly, in new words.
 - Never soften a HOLD to be polite. A weak answer must not advance.
 
 Rules for the challenge text:
 - Raise exactly one issue. Do not summarize what they said back to them.
 - Never declare the idea good or bad. Your job is pressure, not verdicts.
+- Keep it to 2-4 sentences.
 ''';
 
   Future<ZetraTurn> challenge({
@@ -227,9 +250,6 @@ Rules for the challenge text:
     ).firstMatch(raw.trim());
 
     if (match == null) {
-      // Defensive fallback if the model doesn't follow format — hold by
-      // default, since letting an unparseable reply advance is the
-      // worse failure mode.
       return ZetraTurn(advance: false, tag: FindingTag.assumption, text: raw.trim());
     }
 
@@ -311,15 +331,13 @@ class CrucibleController extends ChangeNotifier {
   final List<Map<String, String>> _transcript = [];
   final List<Finding> findings = [];
   final List<String> evidenceLog = [];
+  final List<ArenaMessage> messages = [];
 
-  String? currentChallenge;
-  String? lastYourReply;
-  bool? lastReplyWasAdequate; // null = no reply submitted yet this stage
   int stageIndex = 1;
   bool isLoading = false;
   bool isCheckingIntake = false;
   String? errorMessage;
-  String? rejectionReason; // set if intake gate rejects the idea
+  String? rejectionReason;
   JudgeReport? report;
 
   IdeaVersion? get currentVersion => versions.isEmpty ? null : versions.last;
@@ -327,12 +345,10 @@ class CrucibleController extends ChangeNotifier {
   List<String> get stageLabels => ZetraService.stageLabels;
   bool get canRequestJudgment => stageIndex >= 3;
 
-  /// Quick, free, client-side check for obviously trivial replies —
-  /// avoids burning an API call on a one-word non-answer.
   bool _isTriviallyWeak(String reply) {
     final words = reply.trim().split(RegExp(r'\s+'));
     if (words.length <= 2) return true;
-    const fillerOnly = {'yes', 'no', 'ok', 'okay', 'sure', 'true', 'idk', 'maybe'};
+    const fillerOnly = {'yes', 'no', 'ok', 'okay', 'sure', 'true', 'idk', 'maybe', 'hi', 'hello'};
     if (words.length <= 4 &&
         words.every((w) => fillerOnly.contains(w.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '')))) {
       return true;
@@ -355,8 +371,6 @@ class CrucibleController extends ChangeNotifier {
         return;
       }
     } catch (e) {
-      // If the gate check itself fails, don't block the user — proceed,
-      // but surface the error so it's visible something went wrong.
       errorMessage = e.toString();
     }
 
@@ -379,14 +393,20 @@ class CrucibleController extends ChangeNotifier {
         stageIndex: stageIndex,
       );
       _transcript.add({'role': 'assistant', 'content': '[${turn.advance ? "ADVANCE" : "HOLD"}] ${turn.text}'});
-      currentChallenge = turn.text;
       findings.add(Finding(tag: turn.tag, text: turn.text));
 
-      if (lastYourReply != null) {
-        lastReplyWasAdequate = turn.advance;
-        if (turn.advance && stageIndex < totalStages) {
-          stageIndex += 1;
-        }
+      final wasReplyExpected = messages.any((m) => !m.fromZetra);
+      final isHold = wasReplyExpected && !turn.advance;
+
+      messages.add(ArenaMessage(
+        fromZetra: true,
+        text: turn.text,
+        isHold: isHold,
+        stageLabel: stageLabels[stageIndex - 1],
+      ));
+
+      if (wasReplyExpected && turn.advance && stageIndex < totalStages) {
+        stageIndex += 1;
       }
     } catch (e) {
       errorMessage = e.toString();
@@ -398,13 +418,15 @@ class CrucibleController extends ChangeNotifier {
 
   Future<void> replyToChallenge(String text) async {
     if (text.trim().isEmpty) return;
-    lastYourReply = text.trim();
+    messages.add(ArenaMessage(fromZetra: false, text: text.trim()));
 
     if (_isTriviallyWeak(text)) {
-      // Caught client-side — no API call needed, and no stage advance.
-      lastReplyWasAdequate = false;
-      currentChallenge =
-          "That's not an answer — give me specifics: reasoning, a mechanism, or evidence. Restate your response to: \"$currentChallenge\"";
+      messages.add(ArenaMessage(
+        fromZetra: true,
+        text: "That's not an answer — I need real reasoning, a mechanism, or evidence for the point above. Try again.",
+        isHold: true,
+        stageLabel: stageLabels[stageIndex - 1],
+      ));
       notifyListeners();
       return;
     }
@@ -441,11 +463,31 @@ class CrucibleController extends ChangeNotifier {
         ideaContent: currentVersion!.content,
         fullTranscript: _transcript,
       );
+      messages.add(ArenaMessage(
+        fromZetra: true,
+        text: _reportToText(report!),
+        isReport: true,
+      ));
     } catch (e) {
       errorMessage = e.toString();
     } finally {
       isLoading = false;
       notifyListeners();
     }
+  }
+
+  String _reportToText(JudgeReport r) {
+    String block(String title, List<String> items) => items.isEmpty
+        ? ''
+        : '$title\n${items.map((i) => '• $i').join('\n')}\n\n';
+
+    return '${block('Strongest Arguments', r.strongestArguments)}'
+        '${block('Weakest Arguments', r.weakestArguments)}'
+        '${block('Unsupported Assumptions', r.unsupportedAssumptions)}'
+        '${block('Contradictions', r.contradictions)}'
+        '${block('Unanswered Questions', r.unansweredQuestions)}'
+        '${block('Suggested Experiments', r.suggestedExperiments)}'
+        '${r.readinessSummary.isNotEmpty ? 'Readiness: ${r.readinessSummary}' : ''}'
+        .trim();
   }
 }
