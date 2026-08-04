@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'crucible_feature.dart';
 import 'version_compare_screen.dart';
 import 'export_service.dart';
+import 'certificate_service.dart';
 
 class CrucibleArenaScreen extends StatefulWidget {
   const CrucibleArenaScreen({super.key, required this.controller});
@@ -51,6 +52,64 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.redAccent[700]),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  Future<void> _showCertificateDialog() async {
+    final nameController = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF171A21),
+        title: const Text('Secure Your Idea', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Enter the name to appear as rightful owner:',
+                style: TextStyle(color: Colors.white70, fontSize: 13)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: nameController,
+              autofocus: true,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                hintText: 'Full name',
+                hintStyle: TextStyle(color: Colors.white30),
+                filled: true,
+                fillColor: Colors.white10,
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              if (nameController.text.trim().isEmpty) return;
+              Navigator.pop(ctx);
+              _generateCertificate(nameController.text.trim());
+            },
+            child: const Text('Generate'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _generateCertificate(String ownerName) async {
+    setState(() => _exporting = true);
+    try {
+      await CertificateService.generateAndShare(widget.controller, ownerName: ownerName);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Certificate generation failed: $e'), backgroundColor: Colors.redAccent[700]),
         );
       }
     } finally {
@@ -323,6 +382,21 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
                   ),
                 ],
               ),
+              if (c.isProven) ...[
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _exporting ? null : _showCertificateDialog,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFFFD54F),
+                      side: const BorderSide(color: Color(0xFFFFD54F)),
+                    ),
+                    icon: const Icon(Icons.workspace_premium, size: 18),
+                    label: const Text("Secure Your Idea — It's Worth It"),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
