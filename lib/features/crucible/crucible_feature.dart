@@ -184,8 +184,6 @@ NOT_SERIOUS: <one sentence why>
     );
 
     final upper = raw.toUpperCase();
-    // Check NOT_SERIOUS first since "NOT_SERIOUS" also contains "SERIOUS"
-    // as a substring — order matters here.
     final isSerious = upper.contains('NOT_SERIOUS') ? false : upper.contains('SERIOUS');
     final reason = raw.contains(':') ? raw.split(':').skip(1).join(':').trim() : raw.trim();
 
@@ -320,9 +318,22 @@ plainly in the Readiness Summary rather than being generous.
 /// ---------- Controller ----------
 
 class CrucibleController extends ChangeNotifier {
-  CrucibleController({required GroqClient client})
-      : _zetra = ZetraService(client),
+  CrucibleController({
+    required GroqClient client,
+    required this.id,
+    required this.title,
+    required this.oneLiner,
+    this.onSessionChanged,
+  })  : _zetra = ZetraService(client),
         _arbiter = ArbiterService(client);
+
+  final String id;
+  final String title;
+  final String oneLiner;
+
+  /// Called after every state change with a JSON-serializable snapshot.
+  /// The Vault wires this to persist automatically — no manual save calls.
+  final void Function(Map<String, dynamic> session)? onSessionChanged;
 
   final ZetraService _zetra;
   final ArbiterService _arbiter;
@@ -344,6 +355,16 @@ class CrucibleController extends ChangeNotifier {
   int get totalStages => ZetraService.totalStages;
   List<String> get stageLabels => ZetraService.stageLabels;
   bool get canRequestJudgment => stageIndex >= 3;
+
+  @override
+  void notifyListeners() {
+    super.notifyListeners();
+    // Don't persist a session that never actually started (e.g. rejected
+    // at intake) — only save once there's a real idea version to store.
+    if (versions.isNotEmpty) {
+      onSessionChanged?.call(toJson());
+    }
+  }
 
   bool _isTriviallyWeak(String reply) {
     final words = reply.trim().split(RegExp(r'\s+'));
@@ -463,11 +484,7 @@ class CrucibleController extends ChangeNotifier {
         ideaContent: currentVersion!.content,
         fullTranscript: _transcript,
       );
-      messages.add(ArenaMessage(
-        fromZetra: true,
-        text: _reportToText(report!),
-        isReport: true,
-      ));
+      messages.add(ArenaMessage(fromZetra: true, text: _reportToText(report!), isReport: true));
     } catch (e) {
       errorMessage = e.toString();
     } finally {
@@ -477,9 +494,8 @@ class CrucibleController extends ChangeNotifier {
   }
 
   String _reportToText(JudgeReport r) {
-    String block(String title, List<String> items) => items.isEmpty
-        ? ''
-        : '$title\n${items.map((i) => '• $i').join('\n')}\n\n';
+    String block(String title, List<String> items) =>
+        items.isEmpty ? '' : '$title\n${items.map((i) => '• $i').join('\n')}\n\n';
 
     return '${block('Strongest Arguments', r.strongestArguments)}'
         '${block('Weakest Arguments', r.weakestArguments)}'
@@ -489,5 +505,106 @@ class CrucibleController extends ChangeNotifier {
         '${block('Suggested Experiments', r.suggestedExperiments)}'
         '${r.readinessSummary.isNotEmpty ? 'Readiness: ${r.readinessSummary}' : ''}'
         .trim();
+  }
+
+  /// ---------- Persistence ----------
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'oneLiner': oneLiner,
+        'stageIndex': stageIndex,
+        'totalStages': totalStages,
+        'versions': versions
+            .map((v) => {
+                  'versionNumber': v.versionNumber,
+                  'content': v.content,
+                  'createdAt': v.createdAt.toIso8601String(),
+                })
+            .toList(),
+        'transcript': _transcript,
+        'messages': messages
+            .map((m) => {
+                  'fromZetra': m.fromZetra,
+                  'text': m.text,
+                  'isHold': m.isHold,
+                  'isReport': m.isReport,
+                  'stageLabel': m.stageLabel,
+                })
+            .toList(),
+        'findings': findings.map((f) => {'tag': f.tag.name, 'text': f.text}).toList(),
+        'evidenceLog': evidenceLog,
+        'report': report == null
+            ? null
+            : {
+                'strongestArguments': report!.strongestArguments,
+                'weakestArguments': report!.weakestArguments,
+                'unsupportedAssumptions': report!.unsupportedAssumptions,
+                'contradictions': report!.contradictions,
+                'unansweredQuestions': report!.unansweredQuestions,
+                'suggestedExperiments': report!.suggestedExperiments,
+                'readinessSummary': report!.readinessSummary,
+              },
+      };
+
+  factory CrucibleController.fromJson(
+    Map<String, dynamic> json, {
+    required GroqClient client,
+    void Function(Map<String, dynamic> session)? onSessionChanged,
+  }) {
+    final controller = CrucibleController(
+      client: client,
+      id: json['id'] as String,
+      title: json['title'] as String,
+      oneLiner: json['oneLiner'] as String,
+      onSessionChanged: onSessionChanged,
+    );
+
+    controller.stageIndex = json['stageIndex'] as int? ?? 1;
+
+    for (final v in (json['versions'] as List<dynamic>)) {
+      controller.versions.add(IdeaVersion(
+        versionNumber: v['versionNumber'] as int,
+        content: v['content'] as String,
+        createdAt: DateTime.parse(v['createdAt'] as String),
+      ));
+    }
+
+    controller._transcript.addAll(
+      (json['transcript'] as List<dynamic>).map((e) => Map<String, String>.from(e as Map)),
+    );
+
+    for (final m in (json['messages'] as List<dynamic>)) {
+      controller.messages.add(ArenaMessage(
+        fromZetra: m['fromZetra'] as bool,
+        text: m['text'] as String,
+        isHold: m['isHold'] as bool? ?? false,
+        isReport: m['isReport'] as bool? ?? false,
+        stageLabel: m['stageLabel'] as String?,
+      ));
+    }
+
+    for (final f in (json['findings'] as List<dynamic>)) {
+      final tagName = f['tag'] as String;
+      final tag = FindingTag.values.firstWhere((t) => t.name == tagName, orElse: () => FindingTag.assumption);
+      controller.findings.add(Finding(tag: tag, text: f['text'] as String));
+    }
+
+    controller.evidenceLog.addAll((json['evidenceLog'] as List<dynamic>).cast<String>());
+
+    final reportJson = json['report'] as Map<String, dynamic>?;
+    if (reportJson != null) {
+      controller.report = JudgeReport(
+        strongestArguments: (reportJson['strongestArguments'] as List).cast<String>(),
+        weakestArguments: (reportJson['weakestArguments'] as List).cast<String>(),
+        unsupportedAssumptions: (reportJson['unsupportedAssumptions'] as List).cast<String>(),
+        contradictions: (reportJson['contradictions'] as List).cast<String>(),
+        unansweredQuestions: (reportJson['unansweredQuestions'] as List).cast<String>(),
+        suggestedExperiments: (reportJson['suggestedExperiments'] as List).cast<String>(),
+        readinessSummary: reportJson['readinessSummary'] as String,
+      );
+    }
+
+    return controller;
   }
 }
