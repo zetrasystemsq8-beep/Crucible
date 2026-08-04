@@ -356,9 +356,16 @@ class CrucibleController extends ChangeNotifier {
   List<String> get stageLabels => ZetraService.stageLabels;
   bool get canRequestJudgment => stageIndex >= 3;
 
-  /// True once the idea has a completed Arbiter judgment and was never
-  /// held on any challenge during the run — the bar for "Secure Your Idea".
-  bool get isProven => report != null && !messages.any((m) => m.isHold);
+  /// True once the idea has a completed Arbiter judgment and was NOT held
+  /// on any challenge during the final two stages (Viability, Synthesis).
+  /// Earlier-stage holds are allowed — recovering from a rocky start is
+  /// normal; the certificate only cares whether the idea landed clean on
+  /// the parts that matter most for "should this actually get built."
+  bool get isProven {
+    if (report == null) return false;
+    final finalStages = {stageLabels[3], stageLabels[4]}; // Viability, Synthesis
+    return !messages.any((m) => m.isHold && finalStages.contains(m.stageLabel));
+  }
 
   @override
   void notifyListeners() {
