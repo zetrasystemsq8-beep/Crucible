@@ -1,9 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/groq_client.dart';
 import 'features/vault/vault_feature.dart';
-import 'features/vault/vault_screen.dart';
+import 'features/auth/auth_screens.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Supabase.initialize(
+    url: const String.fromEnvironment('SUPABASE_URL'),
+    anonKey: const String.fromEnvironment('SUPABASE_ANON_KEY'),
+  );
+
   runApp(const CrucibleApp());
 }
 
@@ -24,7 +32,7 @@ class CrucibleApp extends StatelessWidget {
         colorSchemeSeed: const Color(0xFFE0272E),
         scaffoldBackgroundColor: const Color(0xFF0B0C10),
       ),
-      home: VaultScreen(client: client, vault: vault),
+      home: SplashScreen(client: client, vault: vault),
     );
   }
 }
