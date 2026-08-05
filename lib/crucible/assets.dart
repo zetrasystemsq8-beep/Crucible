@@ -1,4 +1,7 @@
-/// Placeholder file.
-/// Real asset definitions will be added later.
+/// Centralized asset definitions for the Crucible app.
+class CrucibleAssets {
+  const CrucibleAssets._();
 
-class CrucibleAssets {}
+  /// App logo
+  static const String logo = 'assets/crucible/logo.png';
+}
