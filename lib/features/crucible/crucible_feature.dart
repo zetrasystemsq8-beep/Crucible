@@ -224,6 +224,8 @@ Rules for the challenge text:
 - Raise exactly one issue. Do not summarize what they said back to them.
 - Never declare the idea good or bad. Your job is pressure, not verdicts.
 - Keep it to 2-4 sentences.
+- ALWAYS include both bracket tags on their own line before your text,
+  in the exact order shown above. Never omit the second (category) tag.
 ''';
 
   Future<ZetraTurn> challenge({
@@ -241,19 +243,32 @@ Rules for the challenge text:
     ];
 
     final raw = await _client.chat(model: model, messages: messages, temperature: 0.5);
+    final trimmed = raw.trim();
 
-    final match = RegExp(
-      r'^\[(\w+)\]\s*\[(\w+)\]\s*(.*)$',
-      dotAll: true,
-    ).firstMatch(raw.trim());
-
-    if (match == null) {
-      return ZetraTurn(advance: false, tag: FindingTag.assumption, text: raw.trim());
+    // Parse leniently: pull off however many leading [TAG] tokens are
+    // actually present instead of requiring an exact two-tag prefix.
+    // The model doesn't always include the category tag — when that
+    // happens we must not silently treat a real ADVANCE as a HELD.
+    final tagPattern = RegExp(r'^\s*\[([A-Za-z_]+)\]\s*');
+    final foundTags = <String>[];
+    String remaining = trimmed;
+    while (true) {
+      final m = tagPattern.firstMatch(remaining);
+      if (m == null) break;
+      foundTags.add(m.group(1)!.toUpperCase());
+      remaining = remaining.substring(m.end);
     }
 
-    final advance = match.group(1)!.toUpperCase() == 'ADVANCE';
-    final tagText = match.group(2)!.toUpperCase();
-    final tag = switch (tagText) {
+    final advance = foundTags.contains('ADVANCE');
+
+    const categoryNames = {
+      'ASSUMPTION', 'EVIDENCE_GAP', 'CONTRADICTION', 'RISK', 'NOVELTY',
+    };
+    final categoryTag = foundTags.firstWhere(
+      (t) => categoryNames.contains(t),
+      orElse: () => '',
+    );
+    final tag = switch (categoryTag) {
       'ASSUMPTION' => FindingTag.assumption,
       'EVIDENCE_GAP' => FindingTag.evidenceGap,
       'CONTRADICTION' => FindingTag.contradiction,
@@ -262,7 +277,9 @@ Rules for the challenge text:
       _ => FindingTag.assumption,
     };
 
-    return ZetraTurn(advance: advance, tag: tag, text: match.group(3)!.trim());
+    final text = remaining.trim().isNotEmpty ? remaining.trim() : trimmed;
+
+    return ZetraTurn(advance: advance, tag: tag, text: text);
   }
 }
 
