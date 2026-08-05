@@ -1,31 +1,40 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'core/groq_client.dart';
+import 'core/zetra_auth.dart';
 import 'features/vault/vault_feature.dart';
+import 'features/vault/vault_screen.dart';
 import 'features/auth/auth_screens.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  await dotenv.load(fileName: '.env');
+
   await Supabase.initialize(
-    url: const String.fromEnvironment('SUPABASE_URL'),
-    anonKey: const String.fromEnvironment('SUPABASE_ANON_KEY'),
+    url: dotenv.env['SUPABASE_URL']!,
+    anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
   );
 
-  runApp(const CrucibleApp());
+  final groqApiKey = dotenv.env['GROQ_API_KEY']!;
+  final client = GroqClient(apiKey: groqApiKey);
+  final vault = VaultController(repository: VaultRepository());
+
+  runApp(CrucibleApp(client: client, vault: vault));
 }
 
 class CrucibleApp extends StatelessWidget {
-  const CrucibleApp({super.key});
+  final GroqClient client;
+  final VaultController vault;
+
+  const CrucibleApp({super.key, required this.client, required this.vault});
 
   @override
   Widget build(BuildContext context) {
-    const groqApiKey = String.fromEnvironment('GROQ_API_KEY');
-    final client = GroqClient(apiKey: groqApiKey);
-    final vault = VaultController(repository: VaultRepository());
-
     return MaterialApp(
       title: 'Crucible',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
