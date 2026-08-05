@@ -2,30 +2,29 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
+    branches:
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: subosito/flutter-action@v2
+      
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.24.0'
           channel: 'stable'
-
-      - name: Install dependencies
+      
+      - name: Get dependencies
         run: flutter pub get
-
+      
       - name: Build APK
-        run: flutter build apk --release --dart-define=GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        run: flutter build apk --release --dart-define=GROQ_API_KEY=${{ secrets.GROQ_API_KEY }} --dart-define=SUPABASE_URL=${{ secrets.SUPABASE_URL }} --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+      
+      - name: Upload APK
+        uses: actions/upload-artifact@v3
         with:
-          name: crucible-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: crucible-release.apk
+          path: build/app/outputs/apk/release/app-release.apk
