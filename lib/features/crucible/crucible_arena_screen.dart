@@ -3,10 +3,15 @@ import 'crucible_feature.dart';
 import 'version_compare_screen.dart';
 import 'export_service.dart';
 import 'certificate_service.dart';
+import '../../core/zetra_auth.dart';
+import '../auth/auth_screens.dart';
+import '../vault/vault_feature.dart';
 
 class CrucibleArenaScreen extends StatefulWidget {
-  const CrucibleArenaScreen({super.key, required this.controller});
+  const CrucibleArenaScreen({super.key, required this.controller, required this.client, required this.vault});
   final CrucibleController controller;
+  final dynamic client;
+  final VaultController vault;
 
   @override
   State<CrucibleArenaScreen> createState() => _CrucibleArenaScreenState();
@@ -60,7 +65,33 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
   }
 
   Future<void> _showCertificateDialog() async {
-    final nameController = TextEditingController();
+    if (!AuthService.instance.isFullyAuthenticated) {
+      await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF171A21),
+          title: const Text('Login Required', style: TextStyle(color: Colors.white)),
+          content: const Text('Certificates are tied to your ZetraMail identity — log in to claim this one.',
+              style: TextStyle(color: Colors.white70, fontSize: 13)),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => LoginScreen(client: widget.client, vault: widget.vault),
+                ));
+              },
+              child: const Text('Log In'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final defaultName = AuthService.instance.currentProfile?.username ?? '';
+    final nameController = TextEditingController(text: defaultName);
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -70,8 +101,7 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Enter the name to appear as rightful owner:',
-                style: TextStyle(color: Colors.white70, fontSize: 13)),
+            const Text('Name to appear as rightful owner:', style: TextStyle(color: Colors.white70, fontSize: 13)),
             const SizedBox(height: 12),
             TextField(
               controller: nameController,
@@ -463,7 +493,7 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
               Icon(msg.isHold ? Icons.block : Icons.bolt, size: 14, color: borderColor),
               const SizedBox(width: 6),
               Text(
-                msg.isHold ? 'ZETRA · HELD' : 'ZETRA${msg.stageLabel != null ? " · ${msg.stageLabel!.toUpperCase()}" : ""}',
+                msg.isHold ? 'ZETRA · HELD' : 'ZETRA${msg.stageLabel != null ? " - ${msg.stageLabel!.toUpperCase()}" : ""}',
                 style: TextStyle(color: borderColor, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1),
               ),
             ],
