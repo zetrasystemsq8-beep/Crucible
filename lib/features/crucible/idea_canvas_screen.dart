@@ -96,7 +96,7 @@ class _IdeaCanvasScreenState extends State<IdeaCanvasScreen> {
       );
     } else {
       Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => CrucibleArenaScreen(controller: controller),
+        builder: (_) => CrucibleArenaScreen(controller: controller, client: widget.client, vault: widget.vault),
       ));
     }
   }
