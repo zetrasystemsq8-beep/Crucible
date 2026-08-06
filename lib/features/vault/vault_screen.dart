@@ -39,13 +39,13 @@ class _VaultScreenState extends State<VaultScreen> {
       onSessionChanged: widget.vault.upsertFromSession,
     );
     Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => CrucibleArenaScreen(controller: controller),
+      builder: (_) => CrucibleArenaScreen(controller: controller, client: widget.client, vault: widget.vault),
     ));
   }
 
   void _newIdea() {
     Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => CrucibleArenaScreen(controller: controller, client: widget.client, vault: widget.vault),
+      builder: (_) => IdeaCanvasScreen(client: widget.client, vault: widget.vault),
     ));
   }
 
