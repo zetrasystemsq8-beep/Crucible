@@ -45,7 +45,7 @@ class _VaultScreenState extends State<VaultScreen> {
 
   void _newIdea() {
     Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => IdeaCanvasScreen(client: widget.client, vault: widget.vault),
+      builder: (_) => CrucibleArenaScreen(controller: controller, client: widget.client, vault: widget.vault),
     ));
   }
 
