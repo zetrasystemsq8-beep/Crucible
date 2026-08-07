@@ -1,22 +1,29 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/groq_client.dart';
+import 'core/error_handler.dart';
 import 'features/vault/vault_feature.dart';
 import 'features/auth/auth_screens.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    setupGlobalErrorHandling();
 
-  await Supabase.initialize(
-    url: const String.fromEnvironment('SUPABASE_URL'),
-    anonKey: const String.fromEnvironment('SUPABASE_ANON_KEY'),
-  );
+    await Supabase.initialize(
+      url: const String.fromEnvironment('SUPABASE_URL'),
+      anonKey: const String.fromEnvironment('SUPABASE_ANON_KEY'),
+    );
 
-  const groqApiKey = String.fromEnvironment('GROQ_API_KEY');
-  final client = GroqClient(apiKey: groqApiKey);
-  final vault = VaultController(repository: VaultRepository());
+    const groqApiKey = String.fromEnvironment('GROQ_API_KEY');
+    final client = GroqClient(apiKey: groqApiKey);
+    final vault = VaultController(repository: VaultRepository());
 
-  runApp(CrucibleApp(client: client, vault: vault));
+    runApp(CrucibleApp(client: client, vault: vault));
+  }, (error, stack) {
+    debugPrint('[Crucible] Uncaught error: $error');
+  });
 }
 
 class CrucibleApp extends StatelessWidget {
