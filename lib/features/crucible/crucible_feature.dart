@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../../core/groq_client.dart';
+import '../../core/error_handler.dart';
 
 /// ---------- The Idea Canvas ----------
 
@@ -245,10 +246,6 @@ Rules for the challenge text:
     final raw = await _client.chat(model: model, messages: messages, temperature: 0.5);
     final trimmed = raw.trim();
 
-    // Parse leniently: pull off however many leading [TAG] tokens are
-    // actually present instead of requiring an exact two-tag prefix.
-    // The model doesn't always include the category tag — when that
-    // happens we must not silently treat a real ADVANCE as a HELD.
     final tagPattern = RegExp(r'^\s*\[([A-Za-z_]+)\]\s*');
     final foundTags = <String>[];
     String remaining = trimmed;
@@ -348,8 +345,6 @@ class CrucibleController extends ChangeNotifier {
   final String title;
   final String oneLiner;
 
-  /// Called after every state change with a JSON-serializable snapshot.
-  /// The Vault wires this to persist automatically — no manual save calls.
   final void Function(Map<String, dynamic> session)? onSessionChanged;
 
   final ZetraService _zetra;
@@ -373,22 +368,15 @@ class CrucibleController extends ChangeNotifier {
   List<String> get stageLabels => ZetraService.stageLabels;
   bool get canRequestJudgment => stageIndex >= 3;
 
-  /// True once the idea has a completed Arbiter judgment and was NOT held
-  /// on any challenge during the final two stages (Viability, Synthesis).
-  /// Earlier-stage holds are allowed — recovering from a rocky start is
-  /// normal; the certificate only cares whether the idea landed clean on
-  /// the parts that matter most for "should this actually get built."
   bool get isProven {
     if (report == null) return false;
-    final finalStages = {stageLabels[3], stageLabels[4]}; // Viability, Synthesis
+    final finalStages = {stageLabels[3], stageLabels[4]};
     return !messages.any((m) => m.isHold && finalStages.contains(m.stageLabel));
   }
 
   @override
   void notifyListeners() {
     super.notifyListeners();
-    // Don't persist a session that never actually started (e.g. rejected
-    // at intake) — only save once there's a real idea version to store.
     if (versions.isNotEmpty) {
       onSessionChanged?.call(toJson());
     }
@@ -420,7 +408,7 @@ class CrucibleController extends ChangeNotifier {
         return;
       }
     } catch (e) {
-      errorMessage = e.toString();
+      errorMessage = friendlyMessage(e);
     }
 
     isCheckingIntake = false;
@@ -458,7 +446,7 @@ class CrucibleController extends ChangeNotifier {
         stageIndex += 1;
       }
     } catch (e) {
-      errorMessage = e.toString();
+      errorMessage = friendlyMessage(e);
     } finally {
       isLoading = false;
       notifyListeners();
@@ -514,7 +502,7 @@ class CrucibleController extends ChangeNotifier {
       );
       messages.add(ArenaMessage(fromZetra: true, text: _reportToText(report!), isReport: true));
     } catch (e) {
-      errorMessage = e.toString();
+      errorMessage = friendlyMessage(e);
     } finally {
       isLoading = false;
       notifyListeners();
@@ -534,8 +522,6 @@ class CrucibleController extends ChangeNotifier {
         '${r.readinessSummary.isNotEmpty ? 'Readiness: ${r.readinessSummary}' : ''}'
         .trim();
   }
-
-  /// ---------- Persistence ----------
 
   Map<String, dynamic> toJson() => {
         'id': id,
