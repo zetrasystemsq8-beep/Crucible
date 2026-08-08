@@ -134,6 +134,7 @@ SUMMARY: <2-3 sentences>
       'content_hash': contentHash,
       'created_at': createdAt.toIso8601String(),
       'updated_at': createdAt.toIso8601String(),
+      'snapshot_data': {},
     });
 
     return OverviewResult(id: overviewId);
