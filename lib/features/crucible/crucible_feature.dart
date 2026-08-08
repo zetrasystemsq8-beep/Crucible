@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../../core/groq_client.dart';
 import '../../core/error_handler.dart';
+import '../../core/connectivity.dart';
 
 /// ---------- The Idea Canvas ----------
 
@@ -395,8 +396,16 @@ class CrucibleController extends ChangeNotifier {
 
   Future<void> startPressureTest(IdeaCanvasData canvas) async {
     isCheckingIntake = true;
+    errorMessage = null;
     rejectionReason = null;
     notifyListeners();
+
+    if (!await hasInternetConnection()) {
+      errorMessage = noConnectionMessage;
+      isCheckingIntake = false;
+      notifyListeners();
+      return;
+    }
 
     final content = canvas.toIdeaContent();
     try {
@@ -422,6 +431,13 @@ class CrucibleController extends ChangeNotifier {
     isLoading = true;
     errorMessage = null;
     notifyListeners();
+
+    if (!await hasInternetConnection()) {
+      errorMessage = noConnectionMessage;
+      isLoading = false;
+      notifyListeners();
+      return;
+    }
 
     try {
       final turn = await _zetra.challenge(
@@ -495,6 +511,14 @@ class CrucibleController extends ChangeNotifier {
     isLoading = true;
     errorMessage = null;
     notifyListeners();
+
+    if (!await hasInternetConnection()) {
+      errorMessage = noConnectionMessage;
+      isLoading = false;
+      notifyListeners();
+      return;
+    }
+
     try {
       report = await _arbiter.judge(
         ideaContent: currentVersion!.content,
