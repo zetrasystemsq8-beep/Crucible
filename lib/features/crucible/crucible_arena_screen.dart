@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'crucible_feature.dart';
 import 'version_compare_screen.dart';
 import 'export_service.dart';
 import 'certificate_service.dart';
+import '../../core/groq_client.dart';
 import '../../core/zetra_auth.dart';
+import '../../core/overview_service.dart';
 import '../auth/auth_screens.dart';
 import '../vault/vault_feature.dart';
 
 class CrucibleArenaScreen extends StatefulWidget {
   const CrucibleArenaScreen({super.key, required this.controller, required this.client, required this.vault});
   final CrucibleController controller;
-  final dynamic client;
+  final GroqClient client;
   final VaultController vault;
 
   @override
@@ -21,6 +24,7 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
   final _replyController = TextEditingController();
   final _scrollController = ScrollController();
   bool _exporting = false;
+  bool _submittingOverview = false;
 
   @override
   void initState() {
@@ -64,31 +68,34 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
     }
   }
 
+  Future<bool> _requireLogin() async {
+    if (AuthService.instance.isFullyAuthenticated) return true;
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF171A21),
+        title: const Text('Login Required', style: TextStyle(color: Colors.white)),
+        content: const Text('This is tied to your ZetraMail identity — log in to continue.',
+            style: TextStyle(color: Colors.white70, fontSize: 13)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => LoginScreen(client: widget.client, vault: widget.vault),
+              ));
+            },
+            child: const Text('Log In'),
+          ),
+        ],
+      ),
+    );
+    return false;
+  }
+
   Future<void> _showCertificateDialog() async {
-    if (!AuthService.instance.isFullyAuthenticated) {
-      await showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          backgroundColor: const Color(0xFF171A21),
-          title: const Text('Login Required', style: TextStyle(color: Colors.white)),
-          content: const Text('Certificates are tied to your ZetraMail identity — log in to claim this one.',
-              style: TextStyle(color: Colors.white70, fontSize: 13)),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => LoginScreen(client: widget.client, vault: widget.vault),
-                ));
-              },
-              child: const Text('Log In'),
-            ),
-          ],
-        ),
-      );
-      return;
-    }
+    if (!await _requireLogin()) return;
 
     final defaultName = AuthService.instance.currentProfile?.username ?? '';
     final nameController = TextEditingController(text: defaultName);
@@ -144,6 +151,137 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
       }
     } finally {
       if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  Future<void> _startOverviewFlow() async {
+    if (!await _requireLogin()) return;
+
+    setState(() => _submittingOverview = true);
+    OverviewMeta meta;
+    try {
+      meta = await OverviewService.draftMeta(client: widget.client, controller: widget.controller);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not draft Overview: $e'), backgroundColor: Colors.redAccent[700]),
+        );
+      }
+      setState(() => _submittingOverview = false);
+      return;
+    }
+    setState(() => _submittingOverview = false);
+    if (!mounted) return;
+
+    final summaryController = TextEditingController(text: meta.executiveSummary);
+    String selectedCategory = meta.category;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF171A21),
+          title: const Text('Review Overview', style: TextStyle(color: Colors.white)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('This is what experts on Tribunal will see. Edit before submitting.',
+                    style: TextStyle(color: Colors.white54, fontSize: 12)),
+                const SizedBox(height: 16),
+                const Text('Category', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                const SizedBox(height: 6),
+                DropdownButtonFormField<String>(
+                  value: selectedCategory,
+                  dropdownColor: const Color(0xFF171A21),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    filled: true, fillColor: Colors.white10, border: OutlineInputBorder(),
+                  ),
+                  items: OverviewService.categories
+                      .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                      .toList(),
+                  onChanged: (v) => setDialogState(() => selectedCategory = v ?? selectedCategory),
+                ),
+                const SizedBox(height: 16),
+                const Text('Executive Summary', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: summaryController,
+                  maxLines: 5,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    filled: true, fillColor: Colors.white10, border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _submitOverview(category: selectedCategory, summary: summaryController.text.trim());
+              },
+              child: const Text('Submit to Tribunal'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _submitOverview({required String category, required String summary}) async {
+    setState(() => _submittingOverview = true);
+    try {
+      final result = await OverviewService.submit(
+        controller: widget.controller,
+        category: category,
+        executiveSummary: summary,
+      );
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF171A21),
+          title: const Text('Submitted to Tribunal', style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Give this Overview ID to Tribunal to have it reviewed:',
+                  style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(6)),
+                child: SelectableText(result.id, style: const TextStyle(color: Colors.white, fontFamily: 'monospace', fontSize: 12)),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: result.id));
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied')));
+              },
+              child: const Text('Copy'),
+            ),
+            FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Done')),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Submission failed: $e'), backgroundColor: Colors.redAccent[700]),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _submittingOverview = false);
     }
   }
 
@@ -424,6 +562,21 @@ class _CrucibleArenaScreenState extends State<CrucibleArenaScreen> {
                     ),
                     icon: const Icon(Icons.workspace_premium, size: 18),
                     label: const Text("Secure Your Idea — It's Worth It"),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _submittingOverview ? null : _startOverviewFlow,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.lightBlueAccent,
+                      side: const BorderSide(color: Colors.lightBlueAccent),
+                    ),
+                    icon: _submittingOverview
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.lightBlueAccent))
+                        : const Icon(Icons.send_rounded, size: 18),
+                    label: const Text('Submit to Tribunal'),
                   ),
                 ),
               ],
