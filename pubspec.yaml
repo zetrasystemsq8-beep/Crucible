@@ -16,6 +16,7 @@ dependencies:
   printing: ^5.11.1
   crypto: ^3.0.3
   supabase_flutter: ^2.3.4
+  uuid: ^4.4.0
 
 dev_dependencies:
   flutter_test:
