@@ -133,6 +133,7 @@ SUMMARY: <2-3 sentences>
       'arbiter_report': reportJson,
       'content_hash': contentHash,
       'created_at': createdAt.toIso8601String(),
+      'updated_at': createdAt.toIso8601String(),
     });
 
     return OverviewResult(id: overviewId);
