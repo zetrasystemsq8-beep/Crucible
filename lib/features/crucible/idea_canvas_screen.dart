@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
 import '../../core/groq_client.dart';
 import '../vault/vault_feature.dart';
 import 'crucible_feature.dart';
@@ -77,7 +78,7 @@ class _IdeaCanvasScreenState extends State<IdeaCanvasScreen> {
 
     final controller = CrucibleController(
       client: widget.client,
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      id: const Uuid().v4(),
       title: canvas.title,
       oneLiner: canvas.oneSentence,
       onSessionChanged: widget.vault.upsertFromSession,
