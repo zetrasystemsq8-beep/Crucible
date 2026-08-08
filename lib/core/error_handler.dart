@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'zetra_auth.dart';
 
+const String noConnectionMessage = "No internet connection. Check your network and try again.";
+
 /// Converts a caught exception into a short, non-technical message safe
 /// to show in the UI — never raw exception text or stack traces.
 String friendlyMessage(Object error) {
   if (error is ZetraAuthException) return error.message;
-  if (error is SocketException) return "No internet connection. Check your network and try again.";
+  if (error is SocketException) return noConnectionMessage;
   if (error is TimeoutException) return "That took too long to respond. Try again.";
   if (error is HttpException) return "Couldn't reach the server. Try again in a moment.";
   if (error is PostgrestException) return "Something went wrong saving your data. Try again.";
@@ -18,7 +20,7 @@ String friendlyMessage(Object error) {
 
   final text = error.toString();
   if (text.contains('SocketException') || text.contains('Failed host lookup')) {
-    return "No internet connection. Check your network and try again.";
+    return noConnectionMessage;
   }
   if (text.contains('TimeoutException')) {
     return "That took too long to respond. Try again.";
